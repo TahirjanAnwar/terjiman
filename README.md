@@ -102,3 +102,9 @@ Checks (they cost nothing: the app checks use canned demo answers, the engine ch
 `check_app.py` drives real windows (a test copy of Terjiman and Notepad) with real keystrokes. It waits until the
 keyboard and mouse are idle and stops if another window comes to the front. `terjiman.py --screenshot DIR` makes
 pictures of the box and the settings window in every language. `tools\make_icon.py` draws the icon.
+
+## License
+
+Terjiman's own code is under the [MIT License](LICENSE). You may use, change and share it, as long as you keep
+the copyright notice. The packages that `setup.cmd` installs keep their own licenses: Qt for Python (LGPL), the
+Anthropic SDK (Apache 2.0), and keyring and jiter (MIT).
