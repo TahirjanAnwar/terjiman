@@ -246,6 +246,16 @@ def first_start(python: Path) -> None:
 
 def main() -> int:
     app = QCoreApplication(sys.argv)  # noqa: F841 - QLocalSocket needs it
+    try:
+        command("state", timeout_ms=500, server=server_for(ROOT))
+        real_running = True
+    except ConnectionError:
+        real_running = False
+    if real_running:
+        # The real Terjiman watches the clipboard too: the Ctrl+C-twice step would make it translate the test
+        # text with Claude, which costs money and changes where its box pastes.
+        print("The real Terjiman is running. Quit it first (tray icon -> Quit), then run this test again.")
+        return 2
     HOME.mkdir(parents=True, exist_ok=True)
     (HOME / "settings.json").write_text(json.dumps({"shortcut": "Ctrl+Shift+F11", "language": "en"}),
                                         encoding="utf-8")

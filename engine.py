@@ -74,8 +74,10 @@ class EngineError(Exception):
 
 def _script_rule(mine: str) -> str:
     if mine == "ug":
-        return ("Write Uyghur in the Uyghur Arabic script, the way the writer does. If the writer used the Latin "
-                "script (ULY), use that instead.")
+        # Claude Haiku 5.5 once wrote "رەھмەт" (Cyrillic letters inside an Arabic-script word) in the live test.
+        return ("Write Uyghur in the Uyghur Arabic script, the way the writer does, using Arabic-script letters only: "
+                "never put Cyrillic or Latin letters inside Uyghur words. If the writer used the Latin script (ULY), "
+                "use that instead.")
     return ""
 
 
@@ -226,6 +228,7 @@ class Engine:
     def __init__(self, api_key: str):
         self.sdk = _sdk()
         self.client = self.sdk.Anthropic(api_key=api_key, timeout=90.0, max_retries=2)
+        self.last_usage = None      # token counts of the last finished request (tools/check_live.py shows the cost)
 
     def _stream(self, quality: str, **request):
         model = MODELS.get(quality, MODELS["best"])
@@ -252,6 +255,7 @@ class Engine:
                 final = stream.get_final_message()
         except self.sdk.APIError as error:
             raise _engine_error(error) from error
+        self.last_usage = final.usage
         if final.stop_reason == "refusal":
             raise EngineError("refused")
         return parts

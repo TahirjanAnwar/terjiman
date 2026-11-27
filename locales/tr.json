@@ -47,7 +47,7 @@
   "key_missing": "Önce bir anahtar yapıştırın.",
   "quality_label": "Kalite",
   "quality_best": "En iyi: Claude Opus 5.5 (mesaj başına yaklaşık 1–2 ABD senti)",
-  "quality_fast": "Hızlı ve ucuz: Claude Haiku 5.5",
+  "quality_fast": "Hızlı ve ucuz: Claude Haiku 5.5 (Uygurcası daha zayıf)",
   "target_label": "Şu dile çevir",
   "mine_label": "Benim dilim",
   "shortcut_label": "Kısayol",

@@ -47,7 +47,7 @@
   "key_missing": "الصق مفتاحًا أولًا.",
   "quality_label": "الجودة",
   "quality_best": "الأفضل: Claude Opus 5.5 (نحو 1–2 سنت أمريكي لكل رسالة)",
-  "quality_fast": "سريع ورخيص: Claude Haiku 5.5",
+  "quality_fast": "سريع ورخيص: Claude Haiku 5.5 (أضعف في الأويغورية)",
   "target_label": "الترجمة إلى",
   "mine_label": "لغتي",
   "shortcut_label": "اختصار لوحة المفاتيح",
