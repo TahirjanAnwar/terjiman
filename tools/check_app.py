@@ -32,7 +32,11 @@ import winkeys  # noqa: E402
 from PySide6.QtCore import QCoreApplication  # noqa: E402
 from PySide6.QtNetwork import QLocalSocket  # noqa: E402
 
-OUT = Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / "test-output" / "app").resolve()
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+OUT = Path(ARGS[0] if ARGS else ROOT / "test-output" / "app").resolve()
+# --exe PATH: test a built Terjiman.exe instead of the Python script.
+EXE = Path(sys.argv[sys.argv.index("--exe") + 1]).resolve() if "--exe" in sys.argv else None
+START_LIMIT = 10 if EXE else 3      # a one-file exe unpacks itself first
 HOME = OUT / "home"
 SERVER = "Terjiman-" + hashlib.sha1(f"{getpass.getuser()}|{HOME}".lower().encode()).hexdigest()[:12]
 VK_F11, VK_A, VK_C = 0x7A, 0x41, 0x43
@@ -207,6 +211,10 @@ def press_shortcut(front: int, what: str) -> None:
 
 # ---------------------------------------------------------------- the test
 
+def terjiman_command(python: Path, *extra: str) -> list[str]:
+    return [str(EXE), *extra] if EXE else [str(python), str(ROOT / "terjiman.py"), *extra]
+
+
 def first_start(python: Path) -> None:
     """A normal start (not --tray, real engine) without an API key: the box opens at once and asks for the key."""
     home = OUT / "first-start"
@@ -218,7 +226,7 @@ def first_start(python: Path) -> None:
     env.pop("TERJIMAN_DEMO", None)
     server = server_for(home)
     started = time.time()
-    process = subprocess.Popen([str(python), str(ROOT / "terjiman.py")], env=env, cwd=str(ROOT))
+    process = subprocess.Popen(terjiman_command(python), env=env, cwd=str(ROOT))
     state = None
     try:
         while time.time() - started < 15 and not (state and state["visible"]):
@@ -226,8 +234,8 @@ def first_start(python: Path) -> None:
                 state = command("state", server=server)
             except ConnectionError:
                 time.sleep(0.1)
-        check("a normal start opens the box within 3 s", bool(state and state["visible"])
-              and time.time() - started < 3, f"{time.time() - started:.1f} s")
+        check(f"a normal start opens the box within {START_LIMIT} s", bool(state and state["visible"])
+              and time.time() - started < START_LIMIT, f"{time.time() - started:.1f} s")
         check("without a Claude key it uses free Google and says so", bool(state and state["banner"])
               and state["quality"] == "google")
         if state:
@@ -283,7 +291,7 @@ def main() -> int:
     original_window = winkeys.foreground()
     first_start(python)
     original_clipboard = get_clipboard()
-    terjiman = subprocess.Popen([str(python), str(ROOT / "terjiman.py"), "--tray"], env=env, cwd=str(ROOT))
+    terjiman = subprocess.Popen(terjiman_command(python, "--tray"), env=env, cwd=str(ROOT))
     notepad = None
     try:
         try:

@@ -11,3 +11,7 @@ __pycache__/
 
 # Test pictures and scratch settings (tools/check_app.py)
 test-output/
+
+# Built by PyInstaller (terjiman.spec)
+build/
+dist/

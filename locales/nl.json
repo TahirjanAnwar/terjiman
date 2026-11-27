@@ -23,6 +23,7 @@
   "settings": "Instellingen",
   "copied_only": "Gekopieerd. Druk op Ctrl+V waar je het wilt hebben.",
   "err_paste": "Plakken in het andere venster lukte niet. De tekst is gekopieerd: druk daar op Ctrl+V.",
+  "mac_accessibility": "Om in andere apps te plakken, geef Terjiman toestemming in Systeeminstellingen → Privacy en beveiliging → Toegankelijkheid. De tekst is gekopieerd: druk op Ctrl+V.",
   "err_key_invalid": "Je Claude API-sleutel is ongeldig. Controleer hem bij Instellingen.",
   "err_key_denied": "Je API-sleutel mag dit model niet gebruiken: {detail}",
   "err_no_credit": "Je Claude API-tegoed is op. Voeg tegoed toe op platform.claude.com.",
@@ -87,5 +88,6 @@
   "upd_notify": "Er is een Terjiman-update klaar. Klik hier om hem te installeren.",
   "update_ready": "Bijwerken",
   "upd_restart": "Opnieuw starten",
-  "upd_restart_needed": "Er is een nieuwere versie van Terjiman geïnstalleerd. Start hem opnieuw om die te gebruiken."
+  "upd_restart_needed": "Er is een nieuwere versie van Terjiman geïnstalleerd. Start hem opnieuw om die te gebruiken.",
+  "upd_download_page": "De downloadpagina is geopend. Download daar de nieuwe Terjiman en vervang de oude."
 }

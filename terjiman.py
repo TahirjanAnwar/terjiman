@@ -6,7 +6,8 @@ check it. Click one to paste it into the program you came from, or press Enter t
 Write English instead and Terjiman corrects it. Select an English message and press Ctrl+C twice to read it in
 your language.
 
-Start it with Terjiman.exe, or:  .venv\\Scripts\\pythonw.exe terjiman.py [--tray]
+It runs on Windows and macOS: as the built Terjiman.exe / Terjiman.app from the GitHub release, or from a git copy
+with  .venv\\Scripts\\pythonw.exe terjiman.py [--tray]  (Windows; setup.cmd builds the small Terjiman.exe launcher).
 Test helpers: --screenshot DIR (pictures of the window in every language), TERJIMAN_DEMO=1 (canned answers,
 no network), TERJIMAN_HOME=DIR (settings and log in another folder), TERJIMAN_TEST=1 (test commands).
 """
@@ -29,12 +30,31 @@ from pathlib import Path
 
 APP_NAME = "Terjiman"
 APP_ID = "TProduction.Terjiman"
-VERSION = "1.1.1"
-APP_DIR = Path(__file__).resolve().parent
-HOME = Path(os.environ["TERJIMAN_HOME"]).resolve() if os.environ.get("TERJIMAN_HOME") else APP_DIR
+VERSION = "1.2.0"
+IS_WINDOWS = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
+FROZEN = bool(getattr(sys, "frozen", False))          # the built Terjiman.exe / Terjiman.app
+# Where the program is (a git copy: the code folder; a built app: the folder of the .exe or the .app's MacOS folder),
+# and where its texts and pictures are (inside the build when frozen).
+APP_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent
+RESOURCES = Path(getattr(sys, "_MEIPASS", APP_DIR))
+RELEASES_PAGE = "https://github.com/TahirjanAnwar/terjiman/releases/latest"
+RELEASES_API = "https://api.github.com/repos/TahirjanAnwar/terjiman/releases/latest"
+
+
+def default_home() -> Path:
+    """Settings and log: next to the code in a git copy (as before), otherwise in the user's own app-data folder."""
+    if not FROZEN:
+        return APP_DIR
+    if IS_MAC:
+        return Path.home() / "Library" / "Application Support" / APP_NAME
+    return Path(os.environ.get("APPDATA") or Path.home()) / APP_NAME
+
+
+HOME = Path(os.environ["TERJIMAN_HOME"]).resolve() if os.environ.get("TERJIMAN_HOME") else default_home()
 SETTINGS_PATH = HOME / "settings.json"
 LOG_PATH = HOME / "terjiman.log"
-ICON_PATH = APP_DIR / "assets" / "terjiman.ico"
+ICON_PATH = RESOURCES / "assets" / ("terjiman.ico" if IS_WINDOWS else "terjiman.png")
 KEYRING_SERVICE = os.environ.get("TERJIMAN_KEYRING_SERVICE") or APP_NAME
 KEYRING_USER = "claude-api-key"
 DEMO = os.environ.get("TERJIMAN_DEMO") == "1"
@@ -52,7 +72,11 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFor
                                QWidget)
 
 import engine
-import winkeys
+
+if IS_MAC:
+    import mackeys as keys     # Carbon shortcut, Quartz keystrokes, AppKit apps
+else:
+    import winkeys as keys     # RegisterHotKey, SendInput, Win32 windows
 
 LANGUAGE_ORDER = ["en", "ug", "tr", "ar", "nl"]
 RTL_LANGUAGES = {"ug", "ar"}
@@ -65,6 +89,8 @@ TYPING_PAUSE_MS = 900        # translate when the writer stops typing for this l
 GOOGLE_PAUSE_MS = 500        # Google answers in well under a second and costs nothing, so it can ask sooner
 UPDATE_CHECK_HOURS = 6
 COPY_TWICE_WINDOW = (0.06, 0.8)   # seconds between the two Ctrl+C presses
+UI_FAMILY = "Segoe UI" if IS_WINDOWS else ""
+SIZE_SCALE = 1.3 if IS_MAC else 1.0   # macOS counts 72 points per inch, Windows 96: the same text looks smaller there
 
 
 # ---------------------------------------------------------------- logging
@@ -148,17 +174,25 @@ def store_key(key: str) -> bool:
 
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-CAN_AUTOSTART = HOME == APP_DIR      # test copies never touch Windows' start-up list
+LAUNCH_AGENT = Path.home() / "Library" / "LaunchAgents" / "com.tproduction.terjiman.plist"
+CAN_AUTOSTART = not os.environ.get("TERJIMAN_HOME")      # test copies never touch the start-up list
 
 
 def launch_command(*extra: str) -> list[str]:
+    if FROZEN:
+        return [sys.executable, *extra]           # Terjiman.exe, or Terjiman.app/Contents/MacOS/Terjiman
     exe = APP_DIR / "Terjiman.exe"
-    if exe.exists():
+    if IS_WINDOWS and exe.exists():
         return [str(exe), *extra]
-    return [str(Path(sys.executable).with_name("pythonw.exe")), str(APP_DIR / "terjiman.py"), *extra]
+    python = Path(sys.executable)
+    if IS_WINDOWS:
+        python = python.with_name("pythonw.exe")
+    return [str(python), str(APP_DIR / "terjiman.py"), *extra]
 
 
 def autostart_enabled() -> bool:
+    if IS_MAC:
+        return LAUNCH_AGENT.exists()
     import winreg
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
@@ -169,6 +203,16 @@ def autostart_enabled() -> bool:
 
 
 def set_autostart(on: bool) -> None:
+    if IS_MAC:          # a LaunchAgent: macOS starts Terjiman (in the menu bar) when the user logs in
+        if on:
+            import plistlib
+            LAUNCH_AGENT.parent.mkdir(parents=True, exist_ok=True)
+            LAUNCH_AGENT.write_bytes(plistlib.dumps({"Label": "com.tproduction.terjiman",
+                                                     "ProgramArguments": launch_command("--tray"),
+                                                     "RunAtLoad": True}))
+        elif LAUNCH_AGENT.exists():
+            LAUNCH_AGENT.unlink()
+        return
     import winreg
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
         if on:
@@ -184,7 +228,7 @@ def set_autostart(on: bool) -> None:
 
 def load_locales() -> dict[str, dict]:
     locales = {}
-    for file in sorted((APP_DIR / "locales").glob("*.json")):
+    for file in sorted((RESOURCES / "locales").glob("*.json")):
         try:
             locales[file.stem] = json.loads(file.read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
@@ -212,11 +256,13 @@ class Fonts:
         self.scale = 1.45 if self.uyghur == "Microsoft Uighur" else 1.0
 
     def text(self, text: str, size: float) -> QFont:
+        size *= SIZE_SCALE
         if self.uyghur and UYGHUR_LETTERS.search(text or ""):
             font = QFont(self.uyghur)
             font.setPointSizeF(size * self.scale)
         else:
-            font = QFont("Segoe UI")
+            # Windows: Segoe UI. macOS: the system font; for Uyghur without a Uyghur font, macOS picks one itself.
+            font = QFont(UI_FAMILY) if UI_FAMILY else QFont()
             font.setPointSizeF(size)
         return font
 
@@ -260,8 +306,9 @@ def parse_shortcut(text: str) -> tuple[int, int] | None:
     key = key.value if hasattr(key, "value") else int(key)
     mods = combination.keyboardModifiers()
     km = Qt.KeyboardModifier
-    return winkeys.shortcut_to_windows(key, bool(mods & km.ControlModifier), bool(mods & km.ShiftModifier),
-                                       bool(mods & km.AltModifier), bool(mods & km.MetaModifier))
+    # On macOS Qt calls Cmd "Control" and Control "Meta"; keys.shortcut_to_native knows that.
+    return keys.shortcut_to_native(key, bool(mods & km.ControlModifier), bool(mods & km.ShiftModifier),
+                                   bool(mods & km.AltModifier), bool(mods & km.MetaModifier))
 
 
 def shortcut_label(text: str) -> str:
@@ -301,10 +348,55 @@ def short(text: str) -> str:
     return text if len(text) <= 300 else text[:297] + "..."
 
 
+GIT_COPY = not FROZEN and (APP_DIR / ".git").exists()      # a git clone updates with git pull
+WINDOWS_ASSET = "Terjiman.exe"                               # what a built app downloads from the release
+
+
 def version_text() -> str:
     """"1.0.0 (e210a79 · 2026-11-27)" in a git copy, otherwise just the version."""
-    code, out, _ = git("log", "-1", "--format=%h · %cs") if (APP_DIR / ".git").exists() else (1, "", "")
+    code, out, _ = git("log", "-1", "--format=%h · %cs") if GIT_COPY else (1, "", "")
     return f"{VERSION} ({out})" if code == 0 and out else VERSION
+
+
+def version_tuple(text: str) -> tuple:
+    return tuple(int(n) for n in re.findall(r"\d+", text or "")[:3])
+
+
+def latest_release() -> dict:
+    """The newest release on GitHub (tag_name, html_url, body, assets). Raises OSError or ValueError."""
+    import urllib.request
+    request = urllib.request.Request(RELEASES_API, headers={"Accept": "application/vnd.github+json",
+                                                            "User-Agent": f"Terjiman/{VERSION}"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def install_exe_update(url: str) -> str:
+    """Downloads the new Terjiman.exe next to this one and swaps them: a running exe can be renamed, not
+    overwritten. Returns an error text, or "" when it worked."""
+    import urllib.request
+    current = Path(sys.executable)
+    new = current.with_name(current.stem + ".new" + current.suffix)
+    try:
+        request = urllib.request.Request(url, headers={"User-Agent": f"Terjiman/{VERSION}"})
+        with urllib.request.urlopen(request, timeout=300) as response, new.open("wb") as out:
+            shutil.copyfileobj(response, out)
+        if new.stat().st_size < 5_000_000:
+            raise OSError("the download is incomplete")
+        old = current.with_name(f"{current.stem}.old-{int(time.time())}{current.suffix}")
+        current.rename(old)
+        try:
+            new.rename(current)
+        except OSError:
+            old.rename(current)
+            raise
+        return ""
+    except OSError as error:
+        try:
+            new.unlink()
+        except OSError:
+            pass
+        return short(str(error))
 
 
 def rebuild_launcher() -> str:
@@ -331,7 +423,13 @@ def rebuild_launcher() -> str:
 
 
 def remove_old_builds() -> None:
-    for old in APP_DIR.glob("*.old-*"):
+    """Deletes what an update renamed away. A built exe may sit in Downloads, so only its own old copies."""
+    if FROZEN:
+        exe = Path(sys.executable)
+        folder, pattern = exe.parent, f"{exe.stem}.old-*{exe.suffix}"
+    else:
+        folder, pattern = APP_DIR, "*.old-*"
+    for old in folder.glob(pattern):
         try:
             old.unlink()
         except OSError:
@@ -405,7 +503,8 @@ class _PROPVARIANT(ctypes.Structure):
 def set_taskbar_identity(widget: QWidget) -> None:
     """Shows a window on the taskbar as Terjiman, with Terjiman's icon (not as Python with Python's icon), and makes
     pinning it pin Terjiman.exe. The same as T-Player does."""
-    values = ((5, APP_ID), (2, subprocess.list2cmdline(launch_command())), (4, APP_NAME), (3, f"{ICON_PATH},0"))
+    icon = sys.executable if FROZEN else ICON_PATH        # the built exe carries the icon itself (stays put)
+    values = ((5, APP_ID), (2, subprocess.list2cmdline(launch_command())), (4, APP_NAME), (3, f"{icon},0"))
     shell32 = ctypes.windll.shell32         # 5 ID, 2 RelaunchCommand, 4 RelaunchDisplayName, 3 RelaunchIcon
     shell32.SHGetPropertyStoreForWindow.argtypes = [ctypes.c_void_p, ctypes.POINTER(_GUID),
                                                     ctypes.POINTER(ctypes.c_void_p)]
@@ -432,6 +531,8 @@ def set_taskbar_identity(widget: QWidget) -> None:
 
 def windows_touches(widget: QWidget) -> None:
     """Dark title bar and taskbar identity for a window that shows on the taskbar (cosmetic, never fatal)."""
+    if not IS_WINDOWS:
+        return
     for step in (set_dark_title_bar, set_taskbar_identity):
         try:
             step(widget)
@@ -527,6 +628,8 @@ class Box(QWidget):
         self.fonts = owner.fonts
         self.setObjectName("box")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        if IS_MAC:     # macOS hides tool windows when you click into another app; Terjiman's box stays, as on Windows
+            self.setAttribute(Qt.WidgetAttribute.WA_MacAlwaysShowToolWindow, True)
         self.resize(BOX_WIDTH, 200)
         self.setWindowIcon(owner.icon)
         self._input_rtl = None
@@ -788,7 +891,8 @@ class Box(QWidget):
         super().showEvent(event)
         if not self._dark:
             self._dark = True
-            set_dark_title_bar(self)
+            if IS_WINDOWS:
+                set_dark_title_bar(self)
         QTimer.singleShot(0, self.fit)
 
     def hideEvent(self, event):
@@ -871,8 +975,10 @@ class SettingsDialog(QDialog):
 
         self.shortcut = QKeySequenceEdit(QKeySequence.fromString(owner.settings.get("shortcut"),
                                                                  QKeySequence.SequenceFormat.PortableText))
-        self.shortcut.setMaximumSequenceLength(1)
-        self.shortcut.setClearButtonEnabled(True)
+        if hasattr(self.shortcut, "setMaximumSequenceLength"):     # Qt 6.5+; the Mac build uses Qt 6.4
+            self.shortcut.setMaximumSequenceLength(1)
+        if hasattr(self.shortcut, "setClearButtonEnabled"):
+            self.shortcut.setClearButtonEnabled(True)
         form.addRow(t("shortcut_label"), self.shortcut)
 
         self.copy_twice = QCheckBox(t("copy_twice"))
@@ -1086,7 +1192,7 @@ class Terjiman(QObject):
         if not self.server.listen(SERVER_NAME):
             log(f"single-instance server not started: {self.server.errorString()}")
         self.server.newConnection.connect(self._on_connection)
-        self.hotkeys = winkeys.HotkeyListener(lambda: self.hotkeyPressed.emit(winkeys.foreground()))
+        self.hotkeys = keys.HotkeyListener(lambda: self.hotkeyPressed.emit(keys.foreground()))
         shortcut_ok = self.register_shortcut()
         QGuiApplication.clipboard().dataChanged.connect(self._clipboard_changed)
         self.tray.show()
@@ -1113,8 +1219,10 @@ class Terjiman(QObject):
     def t(self, name: str, /, **args) -> str:
         """The text called name in the app's language, with {placeholders} filled in (one is even called {key})."""
         text = self.strings.get(name) or self.locales.get("en", {}).get(name) or name
-        for name, value in args.items():
-            text = text.replace("{" + name + "}", str(value))
+        for placeholder, value in args.items():
+            text = text.replace("{" + placeholder + "}", str(value))
+        if IS_MAC:
+            text = text.replace("Ctrl+", "⌘")        # Mac keyboards copy and paste with Cmd: ⌘C, ⌘V
         return text
 
     def language_name(self, code: str) -> str:
@@ -1224,18 +1332,15 @@ class Terjiman(QObject):
             self.open_box(window)
 
     def _is_own(self, window: int) -> bool:
-        if not window:
-            return False
-        pid = ctypes.c_ulong()
-        ctypes.windll.user32.GetWindowThreadProcessId(ctypes.c_void_p(window), ctypes.byref(pid))
-        return pid.value == os.getpid()
+        """window: a window handle on Windows, an app's process id on macOS."""
+        return bool(window) and keys.window_pid(window) == os.getpid()
 
     def _usable_target(self, window: int) -> bool:
-        return bool(window) and winkeys.is_window(window) and not self._is_own(window) \
-            and not winkeys.is_shell_window(window)
+        return bool(window) and keys.is_window(window) and not self._is_own(window) \
+            and not keys.is_shell_window(window)
 
     def note_foreground(self) -> None:
-        window = winkeys.foreground()
+        window = keys.foreground()
         if self._usable_target(window):
             self._target = window
 
@@ -1252,7 +1357,10 @@ class Terjiman(QObject):
         self.box.show()
         self.box.raise_()
         self.box.activateWindow()
-        winkeys.focus_window(int(self.box.winId()), 0.3)
+        if IS_WINDOWS:
+            keys.focus_window(int(self.box.winId()), 0.3)
+        else:
+            keys.focus_own_app()          # a menu-bar app has to bring itself forward before its window can
         self.box.input.setFocus()
         if first and self.box.text().strip():
             self.text_changed(self.box.text())
@@ -1399,15 +1507,21 @@ class Terjiman(QObject):
             self._target = target
             self.box.show_status(self.t("err_paste"), error=True)
 
-        if not winkeys.focus_window(target):
+        if IS_MAC and not keys.can_type(prompt=True):
+            # macOS lets an app type into other apps only after the user allows it (Accessibility).
+            self.open_box(0)
+            self._target = target
+            self.box.show_status(self.t("mac_accessibility"), error=True)
+            return
+        if not keys.focus_window(target):
             log("paste: the other window didn't come to the front")
             return failed()
-        winkeys.wait_modifiers_up(0.8)
-        if winkeys.foreground() != target:      # never type into a window the writer didn't choose
+        keys.wait_modifiers_up(0.8)
+        if keys.foreground() != target:      # never type into a window the writer didn't choose
             return failed()
-        winkeys.paste()
+        keys.paste()
         if send:
-            QTimer.singleShot(150, lambda: winkeys.foreground() == target and winkeys.enter())
+            QTimer.singleShot(150, lambda: keys.foreground() == target and keys.enter())
         QTimer.singleShot(1500, lambda: self._restore_clipboard(saved, text))
         self._received = ""
         self._shown_key = None
@@ -1454,8 +1568,8 @@ class Terjiman(QObject):
         last_time, last_text = self._last_copy
         self._last_copy = (now, text)
         low, high = COPY_TWICE_WINDOW
-        if text.strip() and text == last_text and low < now - last_time < high and winkeys.ctrl_down():
-            window = winkeys.foreground()
+        if text.strip() and text == last_text and low < now - last_time < high and keys.copy_modifier_down():
+            window = keys.foreground()
             if not self._is_own(window):
                 self._last_copy = (0.0, "")
                 self.read_copied(text, window)
@@ -1551,7 +1665,7 @@ class Terjiman(QObject):
     # ---- updates: the button in the box, Settings and the tray menu all come here
     def _remember_version(self) -> None:
         """The git commit this copy started with: when the files on disk are newer, a restart finishes updating."""
-        code, head, _ = git("rev-parse", "HEAD") if (APP_DIR / ".git").exists() else (1, "", "")
+        code, head, _ = git("rev-parse", "HEAD") if GIT_COPY else (1, "", "")
         self._started_head = head if code == 0 else ""
 
     def update_clicked(self) -> None:
@@ -1574,9 +1688,11 @@ class Terjiman(QObject):
 
     def _check_updates(self, quiet: bool) -> None:
         try:
+            if FROZEN:
+                return self._check_release(quiet)
             if not shutil.which("git"):
                 problem = ("upd_no_git", {})
-            elif not (APP_DIR / ".git").exists():
+            elif not GIT_COPY:
                 problem = ("upd_not_repo", {})
             else:
                 code, _, err = git("fetch", "--quiet", "origin", timeout=120)
@@ -1601,6 +1717,22 @@ class Terjiman(QObject):
                 self.later(lambda: self._message(self.t(problem[0], **problem[1]), warning=True))
         finally:
             self._update_busy = False
+
+    def _check_release(self, quiet: bool) -> None:
+        """The built Terjiman.exe / Terjiman.app: is there a newer release on GitHub?"""
+        try:
+            release = latest_release()
+        except (OSError, ValueError) as error:
+            if not quiet:
+                self.later(lambda: self._message(self.t("upd_fetch_failed", error=short(str(error))), warning=True))
+            return
+        tag = str(release.get("tag_name") or "")
+        if version_tuple(tag) > version_tuple(VERSION):
+            notes = [line.strip(" -*•\t") for line in str(release.get("body") or "").splitlines() if line.strip()]
+            self._release = release
+            self.later(lambda: self._updates_found(1, [tag] + notes[:10], quiet))
+        elif not quiet:
+            self.later(lambda: self._message(self.t("upd_latest")))
 
     def _updates_found(self, count: int, changes: list[str], quiet: bool) -> None:
         self._update_waiting = (count, changes)
@@ -1639,6 +1771,8 @@ class Terjiman(QObject):
             threading.Thread(target=self._install_update, daemon=True).start()
 
     def _install_update(self) -> None:
+        if FROZEN:
+            return self._install_release()
         _, old, _ = git("rev-parse", "HEAD")
         code, out, err = git("pull", "--ff-only", timeout=300)
         if code != 0:
@@ -1658,6 +1792,21 @@ class Terjiman(QObject):
                 return self.later(lambda: self._message(self.t("upd_build_failed", error=error), warning=True))
         log(f"updated {old[:7]} -> {new[:7]} ({len(changed)} files)")
         self.later(self.restart)
+
+    def _install_release(self) -> None:
+        """Windows: download the new Terjiman.exe, swap it in and restart. macOS (or when the exe's folder can't be
+        written): open the download page, because a running .app can't replace itself."""
+        release = getattr(self, "_release", None) or {}
+        if IS_WINDOWS:
+            asset = next((a for a in release.get("assets") or [] if a.get("name") == WINDOWS_ASSET), None)
+            if asset:
+                error = install_exe_update(asset.get("browser_download_url", ""))
+                if not error:
+                    log(f"updated to {release.get('tag_name')}")
+                    return self.later(self.restart)
+                log(f"update download failed: {error}")
+        page = str(release.get("html_url") or RELEASES_PAGE)
+        self.later(lambda: (QDesktopServices.openUrl(QUrl(page)), self._message(self.t("upd_download_page"))))
 
     def restart(self) -> None:
         self.tray.showMessage(APP_NAME, self.t("upd_restarting"), self.icon, 3000)
@@ -1707,13 +1856,16 @@ class Terjiman(QObject):
         if name == "state":
             result = self._cache.get(self._cache_key(self.box.text()))
             return {"visible": self.box.isVisible(), "box": int(self.box.winId()), "text": self.box.text(),
-                    "target": self._target, "foreground": winkeys.foreground(), "status": self.box.status.text(),
+                    "target": self._target, "foreground": keys.foreground(), "status": self.box.status.text(),
                     "status_visible": not self.box.status.isHidden(), "result": result,
                     "read": self.box.read_body.text() if not self.box.read_panel.isHidden() else None,
                     "received": self._received, "banner": not self.box.banner.isHidden(),
                     "height": self.box.height(), "quality": self.quality(), "update": self._update_state}
         if name == "click":
             self.box.cards[int(arg)].clicked.emit(int(arg))
+            return {"ok": True}
+        if name == "write":
+            self.box.set_text(arg)
             return {"ok": True}
         if name == "grab":
             self.box.grab().save(arg)
@@ -1771,7 +1923,7 @@ def another_copy_running(tray_only: bool) -> bool:
     if not socket.waitForConnected(500):
         return False
     if not tray_only:
-        winkeys.allow_others_to_focus()
+        keys.allow_others_to_focus()
         socket.write(b"show\n")
         socket.flush()
         socket.waitForBytesWritten(500)
@@ -1795,6 +1947,11 @@ def main() -> int:
     tray_only = "--tray" in args
     HOME.mkdir(parents=True, exist_ok=True)
     start_log()
+    try:
+        import truststore     # HTTPS checks use the system's certificates (a built Mac app has no others)
+        truststore.inject_into_ssl()
+    except Exception as error:  # noqa: BLE001
+        log(f"system certificates not used: {error}")
     QApplication.setApplicationName(APP_NAME)
     QApplication.setOrganizationName("T-production")
     QApplication.setApplicationVersion(VERSION)

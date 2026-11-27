@@ -23,6 +23,7 @@
   "settings": "Settings",
   "copied_only": "Copied. Press Ctrl+V where you want it.",
   "err_paste": "Couldn't paste into the other window. The text is copied: press Ctrl+V there.",
+  "mac_accessibility": "To paste into other apps, allow Terjiman in System Settings → Privacy & Security → Accessibility. The text is copied: press Ctrl+V.",
   "err_key_invalid": "Your Claude API key isn't valid. Check it in Settings.",
   "err_key_denied": "Your API key can't use this model: {detail}",
   "err_no_credit": "Your Claude API credit is empty. Add credit at platform.claude.com.",
@@ -87,5 +88,6 @@
   "upd_notify": "A Terjiman update is ready. Click here to install it.",
   "update_ready": "Update",
   "upd_restart": "Restart",
-  "upd_restart_needed": "A newer version of Terjiman is installed. Restart it to use the new version."
+  "upd_restart_needed": "A newer version of Terjiman is installed. Restart it to use the new version.",
+  "upd_download_page": "The download page is open. Download the new Terjiman there and replace the old one."
 }

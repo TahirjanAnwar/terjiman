@@ -23,6 +23,7 @@
   "settings": "Ayarlar",
   "copied_only": "Kopyalandı. İstediğiniz yerde Ctrl+V'ye basın.",
   "err_paste": "Diğer pencereye yapıştırılamadı. Metin kopyalandı: orada Ctrl+V'ye basın.",
+  "mac_accessibility": "Diğer uygulamalara yapıştırmak için Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik bölümünde Terjiman'a izin verin. Metin kopyalandı: Ctrl+V'ye basın.",
   "err_key_invalid": "Claude API anahtarınız geçersiz. Ayarlar'dan kontrol edin.",
   "err_key_denied": "API anahtarınız bu modeli kullanamıyor: {detail}",
   "err_no_credit": "Claude API bakiyeniz bitti. platform.claude.com adresinden bakiye ekleyin.",
@@ -87,5 +88,6 @@
   "upd_notify": "Terjiman güncellemesi hazır. Yüklemek için buraya tıklayın.",
   "update_ready": "Güncelle",
   "upd_restart": "Yeniden başlat",
-  "upd_restart_needed": "Terjiman'ın yeni sürümü yüklendi. Kullanmak için yeniden başlatın."
+  "upd_restart_needed": "Terjiman'ın yeni sürümü yüklendi. Kullanmak için yeniden başlatın.",
+  "upd_download_page": "İndirme sayfası açıldı. Yeni Terjiman'ı oradan indirip eskisinin yerine koyun."
 }

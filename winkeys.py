@@ -109,6 +109,21 @@ def top_level(hwnd: int) -> int:
     return user32.GetAncestor(hwnd, 2) or hwnd if hwnd else 0   # GA_ROOT
 
 
+def window_pid(hwnd: int) -> int:
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value
+
+
+def focus_own_app() -> None:
+    """Only macOS needs this (see mackeys.py); on Windows focus_window() does the job."""
+
+
+def can_type(prompt: bool = False) -> bool:
+    """Windows lets any program send keystrokes; macOS asks the user first (see mackeys.py)."""
+    return True
+
+
 def allow_others_to_focus() -> None:
     """Lets the running Terjiman bring its window forward when a second copy is started."""
     user32.AllowSetForegroundWindow(ASFW_ANY)
@@ -197,6 +212,9 @@ def ctrl_down() -> bool:
     return key_down(VK_CONTROL)
 
 
+copy_modifier_down = ctrl_down      # the key held for copying: Ctrl here, Cmd on a Mac
+
+
 def modifiers_down() -> bool:
     return any(key_down(vk) for vk in (VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN))
 
@@ -247,6 +265,9 @@ def shortcut_to_windows(key: int, ctrl: bool, shift: bool, alt: bool, win: bool)
     if not (mods & (MOD_CONTROL | MOD_ALT | MOD_WIN)) and vk not in _NO_MODIFIER_OK:
         return None                                       # Shift+letter alone would stop people typing capitals
     return mods, vk
+
+
+shortcut_to_native = shortcut_to_windows   # Qt's Meta modifier is the Windows key here
 
 
 class HotkeyListener(threading.Thread):
