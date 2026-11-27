@@ -29,7 +29,7 @@ from pathlib import Path
 
 APP_NAME = "Terjiman"
 APP_ID = "TProduction.Terjiman"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 APP_DIR = Path(__file__).resolve().parent
 HOME = Path(os.environ["TERJIMAN_HOME"]).resolve() if os.environ.get("TERJIMAN_HOME") else APP_DIR
 SETTINGS_PATH = HOME / "settings.json"
@@ -62,6 +62,8 @@ DEFAULTS = {"language": "ug", "quality": "best", "target": "en", "mine": "ug", "
             "copy_twice": True, "box_pos": None}
 BOX_WIDTH = 560
 TYPING_PAUSE_MS = 900        # translate when the writer stops typing for this long
+GOOGLE_PAUSE_MS = 500        # Google answers in well under a second and costs nothing, so it can ask sooner
+UPDATE_CHECK_HOURS = 6
 COPY_TWICE_WINDOW = (0.06, 0.8)   # seconds between the two Ctrl+C presses
 
 
@@ -356,6 +358,8 @@ QFrame#readPanel { background: #24252d; border-radius: 9px; }
 QScrollArea { background: transparent; border: none; }
 QToolButton { color: #c9cbd3; background: transparent; border: none; padding: 3px 8px; border-radius: 6px; }
 QToolButton:hover { background: #30313a; color: #ffffff; }
+QToolButton#update[ready="true"] { background: #0099ff; color: #ffffff; padding: 3px 10px; }
+QToolButton#update[ready="true"]:hover { background: #1aa3ff; }
 QPushButton { background: #24252d; color: #f4f4f7; border: 1px solid #3a3b45; border-radius: 6px; padding: 5px 14px; }
 QPushButton:hover { border-color: #0099ff; }
 QPushButton:disabled { color: #6d707b; }
@@ -546,12 +550,17 @@ class Box(QWidget):
         foot.setSpacing(2)
         self.hint = plain_label("hint", wrap=False)
         self.read_button = QToolButton()
+        self.update_button = QToolButton()        # "⟳"; blue "⟳ Update" / "⟳ Restart" when there is one
+        self.update_button.setObjectName("update")
+        self.update_button.setText("⟳")
         self.settings_button = QToolButton()
         self.settings_button.setText("⚙")
         foot.addWidget(self.hint, 1)
         foot.addWidget(self.read_button)
+        foot.addWidget(self.update_button)
         foot.addWidget(self.settings_button)
         root.addLayout(foot)
+        self._update_state = None
 
     # ---- texts
     def retranslate(self) -> None:
@@ -568,8 +577,9 @@ class Box(QWidget):
         self.read_title.setText(o.t("they_wrote"))
         self.read_title.setFont(small)
         self.mode_label.setFont(small)
-        self.banner_text.setText(o.t("need_key"))
+        self.banner_text.setText(o.t("free_mode"))
         self.banner_button.setText(o.t("settings"))
+        self.set_update_state(self._update_state)
         self._input_rtl = None
         self._input_changed(emit=False)
 
@@ -609,6 +619,16 @@ class Box(QWidget):
         self.banner.setVisible(on)
         self.fit()
 
+    def set_update_state(self, state: str | None) -> None:
+        """None: a quiet "⟳" that checks GitHub. "available" / "restart": a blue button that says so."""
+        self._update_state = state
+        o = self.owner
+        labels = {"available": o.t("update_ready"), "restart": o.t("upd_restart")}
+        self.update_button.setText("⟳  " + labels[state] if state in labels else "⟳")
+        self.update_button.setFont(o.small_font() if state in labels else QFont())
+        self.update_button.setToolTip(o.t("upd_restart_needed") if state == "restart" else o.t("check_updates"))
+        restyle(self.update_button, ready=state in labels)
+
     def show_read(self, text: str, error: bool = False) -> None:
         self.read_panel.show()
         show_text(self.read_body, text, self.fonts, 11.0)
@@ -639,7 +659,9 @@ class Box(QWidget):
                 card.show()
             else:
                 card.hide()
-        show_text(self.note, (data.get("note") or "") if final else "", self.fonts, 9.5)
+        # Google sends English back as it was typed: say why there is no correction.
+        note = data.get("note") or (o.t("google_no_grammar") if mode == "same" else "")
+        show_text(self.note, note if final else "", self.fonts, 9.5)
         self.fit()
 
     def clear_result(self) -> None:
@@ -778,10 +800,13 @@ class SettingsDialog(QDialog):
 
         self.best = QRadioButton(t("quality_best"))
         self.fast = QRadioButton(t("quality_fast"))
-        (self.fast if owner.settings.get("quality") == "fast" else self.best).setChecked(True)
+        self.google = QRadioButton(t("quality_free"))
+        chosen = owner.settings.get("quality")
+        {"fast": self.fast, "google": self.google}.get(chosen, self.best).setChecked(True)
         quality = QVBoxLayout()
         quality.addWidget(self.best)
         quality.addWidget(self.fast)
+        quality.addWidget(self.google)
         form.addRow(t("quality_label"), quality)
 
         self.target = self._language_box(owner.settings.get("target"))
@@ -899,7 +924,7 @@ class SettingsDialog(QDialog):
         if key and not o.set_key(key):
             self.say(o.t("err_generic", detail="Windows Credential Manager"), error=True)
             return
-        o.settings.set("quality", "fast" if self.fast.isChecked() else "best")
+        o.settings.set("quality", "google" if self.google.isChecked() else "fast" if self.fast.isChecked() else "best")
         o.settings.set("target", self.target.currentData())
         o.settings.set("mine", self.mine.currentData())
         o.settings.set("copy_twice", self.copy_twice.isChecked())
@@ -938,6 +963,7 @@ class Terjiman(QObject):
         self.key = "" if DEMO else load_key()
         self._engine = None
         self._engine_key = None
+        self._google = None
         self._engine_lock = threading.Lock()
         self._target = 0                 # the window to paste into
         self._received = ""              # the message being replied to (after Ctrl+C twice)
@@ -954,6 +980,8 @@ class Terjiman(QObject):
         self._settings_dialog: SettingsDialog | None = None
         self._update_busy = False
         self._update_waiting = None
+        self._update_state: str | None = None      # None, "available" (on GitHub) or "restart" (already on disk)
+        self._started_head = ""
         self.screenshotting = False
 
         self._relay.connect(lambda job: job(), Qt.ConnectionType.QueuedConnection)
@@ -973,6 +1001,7 @@ class Terjiman(QObject):
             card.clicked.connect(self.pick)
         self.box.banner_button.clicked.connect(self.open_settings)
         self.box.settings_button.clicked.connect(self.open_settings)
+        self.box.update_button.clicked.connect(self.update_clicked)
         self.box.read_button.clicked.connect(lambda: self.read_copied(QGuiApplication.clipboard().text(), None))
         self.box.read_close.clicked.connect(self.close_read)
 
@@ -997,6 +1026,7 @@ class Terjiman(QObject):
 
         if not DEMO:
             threading.Thread(target=engine.warm_up, name="load-anthropic-sdk", daemon=True).start()
+        threading.Thread(target=self._remember_version, name="git-version", daemon=True).start()
         QLocalServer.removeServer(SERVER_NAME)
         if not self.server.listen(SERVER_NAME):
             log(f"single-instance server not started: {self.server.errorString()}")
@@ -1014,6 +1044,11 @@ class Terjiman(QObject):
                                   self.icon, 6000)
         if not (DEMO or TEST):
             QTimer.singleShot(5000, lambda: self.check_updates(quiet=True))
+            # Terjiman can stay in the tray for weeks, so it looks again now and then.
+            self._update_timer = QTimer(self)
+            self._update_timer.setInterval(UPDATE_CHECK_HOURS * 3600 * 1000)
+            self._update_timer.timeout.connect(lambda: self.check_updates(quiet=True))
+            self._update_timer.start()
 
     # ---- helpers
     def later(self, job) -> None:
@@ -1033,17 +1068,31 @@ class Terjiman(QObject):
     def small_font(self) -> QFont:
         return self.fonts.ui(self.lang, 9.0)
 
-    def has_key(self) -> bool:
-        return DEMO or bool(self.key)
+    def quality(self) -> str:
+        """best, fast or google. Without a Claude key Terjiman uses the free Google Translate, so it works for
+        everyone straight away."""
+        chosen = self.settings.get("quality")
+        if chosen == "google" or not (DEMO or self.key):
+            return "google"
+        return chosen if chosen in ("best", "fast") else "best"
 
-    def engine_for(self, key: str):
-        """The translator for this API key. Called from the worker threads: the first call may wait for the
-        Anthropic SDK to finish loading, and the window must not wait with it."""
+    def free_by_default(self) -> bool:
+        """True when Google is used only because there is no Claude key (then the box says how to get better)."""
+        return self.settings.get("quality") != "google" and not (DEMO or self.key)
+
+    def engine_for(self, key: str, quality: str):
+        """The translator to use. Called from the worker threads: the first Claude call may wait for the Anthropic
+        SDK to finish loading, and the window must not wait with it."""
         with self._engine_lock:
             if DEMO:
                 if self._engine is None:
                     self._engine = engine.DemoEngine()
-            elif self._engine is None or self._engine_key != key:
+                return self._engine
+            if quality == "google":
+                if self._google is None:
+                    self._google = engine.GoogleEngine()
+                return self._google
+            if self._engine is None or self._engine_key != key:
                 self._engine = engine.Engine(key)
                 self._engine_key = key
             return self._engine
@@ -1142,7 +1191,7 @@ class Terjiman(QObject):
         elif not self.box.isVisible():
             self._target = 0           # opened from the tray: no program to paste into
         first = not self.box.isVisible()
-        self.box.show_banner(not self.has_key())
+        self.box.show_banner(self.free_by_default())
         if first:
             self.box.place()
         self.box.show()
@@ -1174,11 +1223,12 @@ class Terjiman(QObject):
             self._pause.stop()
             self._show_final(key)
             return
+        self._pause.setInterval(GOOGLE_PAUSE_MS if self.quality() == "google" else TYPING_PAUSE_MS)
         self._pause.start()
 
     def _cache_key(self, text: str) -> tuple:
         s = self.settings
-        return (text.strip(), s.get("mine"), s.get("target"), s.get("quality"), self._received)
+        return (text.strip(), s.get("mine"), s.get("target"), self.quality(), self._received)
 
     def _show_final(self, key) -> None:
         self._shown_key = key
@@ -1195,9 +1245,6 @@ class Terjiman(QObject):
         text = text.strip()
         if not text:
             return
-        if not self.has_key():
-            self.box.show_banner(True)
-            return
         key = self._cache_key(text)
         if key in self._cache:
             self._show_final(key)
@@ -1212,11 +1259,11 @@ class Terjiman(QObject):
         self.box.show_status(self.t("sending" if self._pending_send else "translating"))
         api_key = self.key
         s = self.settings
-        mine, target, quality, received = s.get("mine"), s.get("target"), s.get("quality"), self._received
+        mine, target, quality, received = s.get("mine"), s.get("target"), self.quality(), self._received
 
         def work():
             try:
-                worker = self.engine_for(api_key)
+                worker = self.engine_for(api_key, quality)
                 result = worker.write(text, mine=mine, target=target, quality=quality, received=received,
                                       on_partial=lambda partial: self.writePartial.emit(job, partial),
                                       cancelled=cancel.is_set)
@@ -1243,7 +1290,7 @@ class Terjiman(QObject):
         self._write_cancel = None
         if key == self._cache_key(self.box.text()):
             self._show_final(key)
-            if self._pending_send:
+            if self._pending_send and result["versions"]:
                 self._pending_send = False
                 self.deliver(result["versions"][0]["text"], send=True)
 
@@ -1255,8 +1302,6 @@ class Terjiman(QObject):
         self._pending_send = False
         log(f"translation error: {error}")
         self.box.show_status(self.error_text(error), error=True)
-        if error.kind in ("key_invalid", "no_credit"):
-            self.box.show_banner(True)
 
     def send_first(self) -> None:
         """Enter: paste the first version and press Enter in the other program."""
@@ -1369,9 +1414,6 @@ class Terjiman(QObject):
         if not text:
             self.box.show_read(self.t("nothing_copied"), error=True)
             return
-        if not self.has_key():
-            self.box.show_banner(True)
-            return
         if self._read_cancel:
             self._read_cancel.set()
         self._read_job += 1
@@ -1382,11 +1424,11 @@ class Terjiman(QObject):
         self.box.show_read(self.t("reading"))
         api_key = self.key
         s = self.settings
-        mine, target, quality = s.get("mine"), s.get("target"), s.get("quality")
+        mine, target, quality = s.get("mine"), s.get("target"), self.quality()
 
         def work():
             try:
-                worker = self.engine_for(api_key)
+                worker = self.engine_for(api_key, quality)
                 answer = worker.read(text, mine=mine, target=target, quality=quality,
                                      on_text=lambda so_far: self.readText.emit(job, so_far), cancelled=cancel.is_set)
                 if answer is not None:
@@ -1447,11 +1489,28 @@ class Terjiman(QObject):
         self.apply_language(language)
         self.settings.set("language", self.lang)
         self.settings.save_now()
-        self.box.show_banner(not self.has_key())
+        self.box.show_banner(self.free_by_default())
         if self.box.isVisible() and self.box.text().strip():
             self.request_write(self.box.text())
 
-    # ---- updates
+    # ---- updates: the button in the box, Settings and the tray menu all come here
+    def _remember_version(self) -> None:
+        """The git commit this copy started with: when the files on disk are newer, a restart finishes updating."""
+        code, head, _ = git("rev-parse", "HEAD") if (APP_DIR / ".git").exists() else (1, "", "")
+        self._started_head = head if code == 0 else ""
+
+    def update_clicked(self) -> None:
+        if self._update_state == "available":
+            self._ask_install()
+        elif self._update_state == "restart":
+            self._ask_restart()
+        else:
+            self.check_updates(quiet=False)
+
+    def _set_update_state(self, state: str | None) -> None:
+        self._update_state = state
+        self.box.set_update_state(state)
+
     def check_updates(self, quiet: bool = False) -> None:
         if self._update_busy:
             return
@@ -1472,7 +1531,10 @@ class Terjiman(QObject):
                 if code == 0:
                     n = int(count or "0")
                     if n == 0:
-                        if not quiet:
+                        _, head, _ = git("rev-parse", "HEAD")
+                        if self._started_head and head and head != self._started_head:
+                            self.later(lambda: self._restart_needed(quiet))
+                        elif not quiet:
                             self.later(lambda: self._message(self.t("upd_latest")))
                         return
                     _, changes, _ = git("log", "--format=%s", "HEAD..@{u}")
@@ -1487,10 +1549,25 @@ class Terjiman(QObject):
 
     def _updates_found(self, count: int, changes: list[str], quiet: bool) -> None:
         self._update_waiting = (count, changes)
+        self._set_update_state("available")
         if quiet:
             self.tray.showMessage(APP_NAME, self.t("upd_notify"), self.icon, 10000)
         else:
             self._ask_install()
+
+    def _restart_needed(self, quiet: bool) -> None:
+        """A newer version is already on disk (installed by git pull, or by setup): only a restart is missing."""
+        self._set_update_state("restart")
+        if not quiet:
+            self._ask_restart()
+
+    def _ask_restart(self) -> None:
+        box = self._message_box(self.t("upd_restart_needed"))
+        restart = box.addButton(self.t("upd_restart"), QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(self.t("upd_later"), QMessageBox.ButtonRole.RejectRole)
+        box.exec()
+        if box.clickedButton() is restart:
+            self.restart()
 
     def _tray_message_clicked(self) -> None:
         if self._update_waiting:
@@ -1533,7 +1610,8 @@ class Terjiman(QObject):
         if self.hotkeys:
             self.hotkeys.stop()
         self.server.close()
-        subprocess.Popen(launch_command("--tray"), cwd=str(APP_DIR))
+        # Started from the box: the new copy opens the box again. Otherwise it waits quietly in the tray.
+        subprocess.Popen(launch_command(*([] if self.box.isVisible() else ["--tray"])), cwd=str(APP_DIR))
         QTimer.singleShot(300, self.app.quit)
 
     def _message_box(self, text: str, warning: bool = False) -> QMessageBox:
@@ -1577,7 +1655,7 @@ class Terjiman(QObject):
                     "status_visible": not self.box.status.isHidden(), "result": result,
                     "read": self.box.read_body.text() if not self.box.read_panel.isHidden() else None,
                     "received": self._received, "banner": not self.box.banner.isHidden(),
-                    "height": self.box.height()}
+                    "height": self.box.height(), "quality": self.quality(), "update": self._update_state}
         if name == "click":
             self.box.cards[int(arg)].clicked.emit(int(arg))
             return {"ok": True}
@@ -1593,19 +1671,23 @@ class Terjiman(QObject):
     def take_screenshots(self, folder: Path) -> None:
         folder.mkdir(parents=True, exist_ok=True)
         self.screenshotting = True
-        samples = [("translate", engine.DEMO_SENTENCE, engine.DEMO_READ),
-                   ("correct", "i has send you the video yesterday, did you saw it", "")]
+        english = "i has send you the video yesterday, did you saw it"
+        samples = [("translate", engine.DEMO_SENTENCE, engine.DEMO_READ, "best", None),
+                   ("correct", english, "", "best", None),
+                   ("google", engine.DEMO_SENTENCE, "", "google", "available"),
+                   ("google-english", english, "", "google", "restart")]
         for code in [c for c in LANGUAGE_ORDER if c in self.locales]:
             self.apply_language(code)
-            for name, text, received in samples:
+            for name, text, received, quality, update in samples:
                 self.box.set_text(text)
                 if received:
                     self.box.show_read(received)
                 else:
                     self.box.hide_read()
-                self.box.show_banner(False)
+                self.box.show_banner(quality == "google")     # how a new user without a Claude key sees it
+                self.box.set_update_state(update)
                 self.box.show_status("")
-                self.box.show_result(engine.demo_answer(text), True)
+                self.box.show_result(engine.demo_answer(text, quality), True)
                 self.box.move(40, 40)
                 self.box.show()
                 for _ in range(3):

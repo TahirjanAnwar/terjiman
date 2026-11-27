@@ -34,8 +34,11 @@ MODELS = {"best": "claude-opus-5-5", "fast": "claude-haiku-5-5"}
 # Claude Haiku 5.5 has no server-side fallback, so its requests go without it.
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 LANGUAGE_NAMES = {"en": "English", "ug": "Uyghur", "tr": "Turkish", "ar": "Arabic", "nl": "Dutch"}
-STYLES = ("natural", "polite", "short", "alternative")
+STYLES = ("natural", "polite", "short", "alternative")      # what Claude may answer
 MODES = ("translate", "correct", "word")
+ALL_STYLES = STYLES + ("google",)                             # plus what the free Google engine answers
+ALL_MODES = MODES + ("same",)                                 # "same": Google got text already in the target language
+GOOGLE_URL = "https://translate.googleapis.com/translate_a/single"
 
 WRITE_SCHEMA = {
     "type": "object",
@@ -142,7 +145,7 @@ def normalize(data) -> dict | None:
     """Keeps only well-formed parts of an answer (complete or still streaming)."""
     if not isinstance(data, dict):
         return None
-    mode = data.get("mode") if data.get("mode") in MODES else ""
+    mode = data.get("mode") if data.get("mode") in ALL_MODES else ""
     versions = []
     for item in data.get("versions") or []:
         if not isinstance(item, dict):
@@ -150,7 +153,7 @@ def normalize(data) -> dict | None:
         text = item.get("text") if isinstance(item.get("text"), str) else ""
         if not text.strip():
             continue
-        style = item.get("style") if item.get("style") in STYLES else ""
+        style = item.get("style") if item.get("style") in ALL_STYLES else ""
         meaning = item.get("meaning") if isinstance(item.get("meaning"), str) else ""
         versions.append({"style": style, "text": text.strip(), "meaning": meaning.strip(),
                          "complete": "meaning" in item})
@@ -311,6 +314,73 @@ class Engine:
         return answer
 
 
+class GoogleEngine:
+    """Google Translate through its free web service: no key and no cost, for people without a Claude key. It gives
+    one plain translation (no styles, no grammar help); the meaning check is a translation back. It isn't an official
+    API, so Google can limit heavy use or change it."""
+
+    def __init__(self, timeout: float = 10.0):
+        self.timeout = timeout
+        self.last_usage = None
+
+    def _translate(self, text: str, source: str, target: str) -> tuple[str, str]:
+        """(translation, detected language). The text goes in the request body, never in the web address."""
+        import urllib.error
+        import urllib.parse
+        import urllib.request
+        query = urllib.parse.urlencode({"client": "gtx", "sl": source, "tl": target, "dt": "t"})
+        request = urllib.request.Request(
+            f"{GOOGLE_URL}?{query}", data=urllib.parse.urlencode({"q": text}).encode("utf-8"),
+            headers={"User-Agent": "Mozilla/5.0", "Content-Type": "application/x-www-form-urlencoded;charset=utf-8"})
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as error:
+            raise EngineError("g_limited" if error.code in (429, 503) else "g_failed", f"HTTP {error.code}") from error
+        except (urllib.error.URLError, OSError) as error:
+            raise EngineError("g_no_connection") from error
+        except ValueError as error:
+            raise EngineError("g_failed", "unexpected answer") from error
+        try:
+            translation = "".join(part[0] for part in data[0] if part and isinstance(part[0], str))
+            detected = data[2] if len(data) > 2 and isinstance(data[2], str) else source
+        except (TypeError, IndexError, KeyError) as error:
+            raise EngineError("g_failed", "unexpected answer") from error
+        return translation.strip(), detected.split("-")[0].lower()
+
+    def write(self, text: str, *, mine: str, target: str, quality: str = "google", received: str = "",
+              on_partial: Callable[[dict], None] | None = None,
+              cancelled: Callable[[], bool] = lambda: False) -> dict | None:
+        translation, detected = self._translate(text, "auto", target)
+        if cancelled():
+            return None
+        same = detected == target          # already in the target language: Google can't improve it, send as typed
+        mode = "same" if same else "translate"
+        version = {"style": "google", "text": text.strip() if same or not translation else translation,
+                   "meaning": "", "complete": False}
+        if on_partial:
+            on_partial({"mode": mode, "versions": [dict(version)], "note": ""})
+        meaning, _ = self._translate(version["text"], target, mine)
+        if cancelled():
+            return None
+        version.update(meaning=meaning, complete=True)
+        return {"mode": mode, "versions": [version], "note": ""}
+
+    def read(self, text: str, *, mine: str, target: str, quality: str = "google",
+             on_text: Callable[[str], None] | None = None,
+             cancelled: Callable[[], bool] = lambda: False) -> str | None:
+        translation, detected = self._translate(text, "auto", mine)
+        if detected == mine:               # already in the reader's language: show it in the target language
+            translation, _ = self._translate(text, mine, target)
+        if cancelled():
+            return None
+        if not translation:
+            raise EngineError("g_failed", "empty answer")
+        if on_text:
+            on_text(translation)
+        return translation
+
+
 def check_key(api_key: str) -> None:
     """Raises EngineError if the key doesn't work. Looking up a model costs nothing."""
     anthropic = _sdk()
@@ -340,7 +410,18 @@ DEMO_ANSWER = {
 DEMO_READ = "ياخشىمۇسىز! توي فىلىمىڭىز قاچان تەييار بولىدۇ؟"
 
 
-def demo_answer(text: str) -> dict:
+def demo_answer(text: str, quality: str = "best") -> dict:
+    answer = _demo_claude(text)
+    if quality != "google":
+        return answer
+    same = answer["mode"] == "correct"     # like Google: one version, English comes back as it was typed
+    first = answer["versions"][0]
+    return {"mode": "same" if same else "translate", "note": "",
+            "versions": [{"style": "google", "text": text.strip() if same else first["text"],
+                          "meaning": first["meaning"]}]}
+
+
+def _demo_claude(text: str) -> dict:
     text = text.strip()
     if text == DEMO_SENTENCE:
         return json.loads(json.dumps(DEMO_ANSWER))
@@ -377,7 +458,7 @@ class DemoEngine:
         return parts
 
     def write(self, text, *, mine, target, quality, received="", on_partial=None, cancelled=lambda: False):
-        raw = json.dumps(demo_answer(text), ensure_ascii=False)
+        raw = json.dumps(demo_answer(text, quality), ensure_ascii=False)
 
         def partial(parts):
             if on_partial:

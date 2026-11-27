@@ -186,12 +186,12 @@ def command(line: str, timeout_ms: int = 3000, server: str = SERVER):
     return json.loads(data.decode("utf-8")) if data.strip() else None
 
 
-def wait_for(test, timeout: float, what: str):
+def wait_for(test, timeout: float, what: str, server: str = SERVER):
     end = time.time() + timeout
     last = None
     while time.time() < end:
         try:
-            last = command("state")
+            last = command("state", server=server)
             if last and test(last):
                 return last
         except ConnectionError:
@@ -228,9 +228,25 @@ def first_start(python: Path) -> None:
                 time.sleep(0.1)
         check("a normal start opens the box within 3 s", bool(state and state["visible"])
               and time.time() - started < 3, f"{time.time() - started:.1f} s")
-        check("without an API key the box asks for one", bool(state and state["banner"]))
+        check("without a Claude key it uses free Google and says so", bool(state and state["banner"])
+              and state["quality"] == "google")
         if state:
             command(f"grab {OUT / 'first-start.png'}", server=server)
+            box = state["box"]
+            if winkeys.focus_window(box, 2.0):
+                must_be_front(box, "the first-start box")
+                winkeys.type_text(engine.DEMO_SENTENCE)
+                try:
+                    done = wait_for(lambda s: s["text"] == engine.DEMO_SENTENCE and s["result"], 15,
+                                    "Google's translation", server=server)
+                    version = done["result"]["versions"][0]
+                    check("free Google translates in the real window (no key)", version["style"] == "google"
+                          and bool(version["text"]) and bool(version["meaning"]), version["text"])
+                    command(f"grab {OUT / 'first-start-google.png'}", server=server)
+                except Stop as stop:
+                    check("free Google translates in the real window (no key)", False, str(stop))
+            else:
+                check("free Google translates in the real window (no key)", False, "the box didn't come to the front")
     finally:
         try:
             command("quit", server=server)
@@ -253,9 +269,8 @@ def main() -> int:
         real_running = False
     if real_running:
         # The real Terjiman watches the clipboard too: the Ctrl+C-twice step would make it translate the test
-        # text with Claude, which costs money and changes where its box pastes.
-        print("The real Terjiman is running. Quit it first (tray icon -> Quit), then run this test again.")
-        return 2
+        # text with Claude, which costs money and changes where its box pastes. Everything else is safe.
+        print("The real Terjiman is running, so the Ctrl+C-twice step is skipped (quit it to test that too).")
     HOME.mkdir(parents=True, exist_ok=True)
     (HOME / "settings.json").write_text(json.dumps({"shortcut": "Ctrl+Shift+F11", "language": "en"}),
                                         encoding="utf-8")
@@ -263,10 +278,10 @@ def main() -> int:
                TERJIMAN_KEYRING_SERVICE="Terjiman-test")
     python = ROOT / ".venv" / "Scripts" / "pythonw.exe"
 
-    first_start(python)
     print("Waiting until the keyboard and mouse are idle...", flush=True)
     wait_until_idle()
     original_window = winkeys.foreground()
+    first_start(python)
     original_clipboard = get_clipboard()
     terjiman = subprocess.Popen([str(python), str(ROOT / "terjiman.py"), "--tray"], env=env, cwd=str(ROOT))
     notepad = None
@@ -327,24 +342,33 @@ def main() -> int:
         check("a click pastes version 2 without sending", text == first + "\r\n" + second, repr(text[-80:]))
 
         # C: select all, Ctrl+C twice -> the copied text is read in Uyghur
-        time.sleep(3.2)              # Terjiman ignores the clipboard for 3 s after its own pasting
-        must_be_front(pad, "Notepad")
-        winkeys.combo(VK_A, winkeys.VK_CONTROL)
-        time.sleep(0.2)
-        must_be_front(pad, "Notepad")
-        winkeys.send([winkeys._key(winkeys.VK_CONTROL), winkeys._key(VK_C), winkeys._key(VK_C, True)])
-        time.sleep(0.18)
-        winkeys.send([winkeys._key(VK_C), winkeys._key(VK_C, True)])
-        time.sleep(0.25)
-        winkeys.send([winkeys._key(winkeys.VK_CONTROL, True)])
-        state = wait_for(lambda s: s["visible"] and s["read"] == engine.DEMO_READ, 6, "the copied text to be read")
-        check("Ctrl+C twice shows the copied text translated", True)
-        check("the reply goes back to Notepad", state["target"] == pad)
-        check("the copied message is kept as reply context",
-              state["received"].replace("\r\n", "\n") == first + "\n" + second, repr(state["received"][-60:]))
-        command(f"grab {OUT / 'real-read.png'}")
+        if real_running:
+            print("SKIP  Ctrl+C twice (the real Terjiman would react to it too)", flush=True)
+        else:
+            time.sleep(3.2)              # Terjiman ignores the clipboard for 3 s after its own pasting
+            must_be_front(pad, "Notepad")
+            winkeys.combo(VK_A, winkeys.VK_CONTROL)
+            time.sleep(0.2)
+            must_be_front(pad, "Notepad")
+            winkeys.send([winkeys._key(winkeys.VK_CONTROL), winkeys._key(VK_C), winkeys._key(VK_C, True)])
+            time.sleep(0.18)
+            winkeys.send([winkeys._key(VK_C), winkeys._key(VK_C, True)])
+            time.sleep(0.25)
+            winkeys.send([winkeys._key(winkeys.VK_CONTROL, True)])
+            state = wait_for(lambda s: s["visible"] and s["read"] == engine.DEMO_READ, 6,
+                             "the copied text to be read")
+            check("Ctrl+C twice shows the copied text translated", True)
+            check("the reply goes back to Notepad", state["target"] == pad)
+            check("the copied message is kept as reply context",
+                  state["received"].replace("\r\n", "\n") == first + "\n" + second, repr(state["received"][-60:]))
+            command(f"grab {OUT / 'real-read.png'}")
 
         # D: the shortcut closes the box again; Esc closes it too
+        if not command("state")["visible"]:
+            if not winkeys.focus_window(pad, 2.0):
+                raise Stop("couldn't bring Notepad back to the front")
+            press_shortcut(pad, "Notepad")
+            wait_for(lambda s: s["visible"] and s["foreground"] == s["box"], 5, "the box to open")
         must_be_front(box, "the Terjiman box")
         press_shortcut(box, "the Terjiman box")
         wait_for(lambda s: not s["visible"], 3, "the shortcut to close the box")

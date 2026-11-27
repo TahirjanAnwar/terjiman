@@ -4,6 +4,7 @@
 
 ئۇيغۇرچە يېزىڭ، ئىنگلىزچە ئەۋەتىڭ. تەرجىمان ھەر قانداق پروگراممىدا ئىشلەيدۇ: Ctrl+Shift+Space نى بېسىڭ، ئۇيغۇرچە
 يېزىڭ، Claude ئۈچ خىل ئىنگلىزچە جۈملە بېرىدۇ، ھەر بىرىنىڭ ئاستىدا ئۇيغۇرچە مەنىسى بار. بىرىنى چېكىڭ ياكى Enter نى بېسىڭ.
+ئاچقۇچىڭىز بولمىسا، تەرجىمان Google ئارقىلىق ھەقسىز ئىشلەيدۇ.
 
 Terjiman (تەرجىمان, "translator") is a small helper for Windows. Press **Ctrl+Shift+Space** in any program
 (WhatsApp, email, Instagram, YouTube, Claude) and a small box opens. Write your message in Uyghur, and Claude
@@ -20,6 +21,10 @@ Under each version you see its meaning back in Uyghur, so you can check that it 
 - **Write English instead**, and Terjiman corrects it and explains the mistakes in Uyghur.
 - **Got an English message?** Select it and press **Ctrl+C twice**. Terjiman shows it in Uyghur, and the reply
   you write next is translated to fit it.
+
+**No key? It still works, for free.** Without a Claude API key, Terjiman uses Google Translate: one plain
+translation (no styles and no grammar help), with its meaning in Uyghur underneath. Google makes more mistakes,
+and that meaning line is how you catch them. Add a Claude key whenever you want the better translations.
 
 The app speaks English, Uyghur, Turkish, Arabic and Dutch. In Settings you can also translate into Dutch,
 Turkish or Arabic instead of English, or check your meaning in another language than Uyghur.
@@ -47,9 +52,23 @@ You need Windows 10 or 11, [Python 3.12](https://www.python.org/downloads/) and
 Terjiman lives next to the clock (the blue speech bubble). Click it, or press the shortcut, to open the box.
 To have it ready after every restart, tick **Start Terjiman when Windows starts** in Settings.
 
-## Your Claude API key
+## Free, or better with your own Claude key
 
-Terjiman uses Claude through the Anthropic API. It doesn't come with a key: everyone uses their own. The API is
+| | Free: Google Translate | Claude Haiku 5.5 | Claude Opus 5.5 (best) |
+|---|---|---|---|
+| Key needed | No | Yes | Yes |
+| Versions | 1 | 3 (natural, polite, short) | 3 (natural, polite, short) |
+| Grammar help for English | No | Yes | Yes |
+| Uyghur quality | Weakest | Good English, weaker Uyghur | Best |
+| Cost | Free | Less than 0.1 cent a message | About 1–1.5 US cents a message |
+
+![Free mode with Google Translate](docs/terjiman-free-ug.png)
+
+Without a key Terjiman starts in free mode, and a blue line in the box says so. To choose Google on purpose, pick
+**Free: Google Translate** in Settings. The free mode uses Google Translate's free web service: it isn't an
+official API, so Google can limit very heavy use or change it.
+
+For Claude, Terjiman uses the Anthropic API. It doesn't come with a key: everyone uses their own. The API is
 paid per use, separately from a Claude.ai subscription.
 
 1. Sign in at [platform.claude.com](https://platform.claude.com) and add some credit (Settings → Billing).
@@ -63,8 +82,8 @@ The key is kept in Windows Credential Manager on your own PC, not in a file, and
 costs less than 0.1 cent per message, but its Uyghur is weaker. Terjiman asks Claude again each time you pause
 while typing. Claude keeps Terjiman's instructions cached for 5 minutes, so those repeats cost about 30% less.
 
-**Privacy.** What you write in the box, and the text you read with Ctrl+C twice, is sent to Anthropic's API to be
-translated. Nothing else leaves your PC.
+**Privacy.** What you write in the box, and the text you read with Ctrl+C twice, is sent to be translated: to
+Anthropic's API with Claude, or to Google in free mode. Nothing else leaves your PC.
 
 ## Keys
 
@@ -81,17 +100,21 @@ If Terjiman can't paste into the other program, the text stays copied: press Ctr
 
 ## Updates
 
-Click **Check for updates** in Settings or in the tray menu. Terjiman downloads the new version from GitHub
-(`git pull`), installs new packages if needed, and restarts. It also checks quietly a few seconds after it starts.
+The **⟳** button at the bottom of the box checks GitHub for a new version. Terjiman also checks by itself a few
+seconds after it starts and every 6 hours. When there is an update, the button turns blue and says **Update**:
+click it, and Terjiman downloads the new version (`git pull`), installs new packages if needed, and restarts.
+If a newer version is already on your PC (for example after `git pull`), the button says **Restart**.
+*Check for updates* is in Settings and in the tray menu too.
 
 ## For developers
 
 - `terjiman.py`: the box, tray icon, settings, pasting and updates (Qt for Python, PySide6)
-- `engine.py`: the prompts and the streamed Claude requests (structured JSON output, refusal fallback on Opus)
+- `engine.py`: the prompts and the streamed Claude requests (structured JSON output, refusal fallback on Opus,
+  cached instructions), and the free Google Translate engine
 - `winkeys.py`: the system-wide shortcut and the keystrokes into other programs (Win32 through ctypes)
 - `locales/*.json`: the app's texts in five languages
 
-Checks (they cost nothing: the app checks use canned demo answers, the engine check uses a fake key):
+Checks (they cost nothing: canned demo answers, free Google Translate, and a fake key that Anthropic refuses):
 
 ```
 .venv\Scripts\python.exe tools\check_engine.py

@@ -81,6 +81,30 @@ check("demo English text gets corrected", demo.write("i has a apple", mine="ug",
 check("demo cancel stops", demo.write(engine.DEMO_SENTENCE, mine="ug", target="en", quality="best",
                                       cancelled=lambda: True) is None)
 
+google_demo = demo.write("i has a apple", mine="ug", target="en", quality="google")
+check("demo Google mode answers one version, English as typed", google_demo["mode"] == "same"
+      and [v["style"] for v in google_demo["versions"]] == ["google"])
+
+# ---- Google Translate (free, no key; needs the internet)
+if "--offline" not in sys.argv:
+    google = engine.GoogleEngine()
+    seen = []
+    result = google.write(engine.DEMO_SENTENCE, mine="ug", target="en", on_partial=seen.append)
+    version = result["versions"][0]
+    check("Google translates Uyghur into English", result["mode"] == "translate" and version["style"] == "google"
+          and "English" in version["text"], version["text"])
+    check("Google's meaning check comes back in Uyghur", bool(engine.ARABIC_SCRIPT.search(version["meaning"])),
+          version["meaning"])
+    check("Google shows the English before the meaning check", bool(seen)
+          and seen[0]["versions"][0]["meaning"] == "")
+    same = google.write("i has a apple", mine="ug", target="en")
+    check("Google leaves English as typed (it can't correct it)", same["mode"] == "same"
+          and same["versions"][0]["text"] == "i has a apple")
+    read = google.read("Thank you so much! Could you send us the photos?", mine="ug", target="en")
+    check("Google reads English into Uyghur", bool(engine.ARABIC_SCRIPT.search(read)), read)
+    check("Google's answers keep the format the window expects", engine.normalize(result) is not None
+          and engine.normalize(result)["versions"][0]["style"] == "google")
+
 # ---- the SDK accepts our requests (needs the internet; a fake key is refused for free)
 if "--offline" not in sys.argv:
     fake = "terjiman-test-not-a-real-key"     # doesn't look like a real key, so secret scanners stay quiet

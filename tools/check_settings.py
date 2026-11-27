@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -70,8 +71,22 @@ for code in terjiman.LANGUAGE_ORDER:
 check("every error has a message in every language", not bad, ", ".join(bad[:5]))
 t.apply_language("en")
 t._write_failed(t._write_job, engine.EngineError("no_credit"))
-check("a credit error shows the message and the Settings banner",
-      "credit" in t.box.status.text() and not t.box.banner.isHidden())
+check("a credit error shows its message", "credit" in t.box.status.text())
+
+# ---- which translator: free Google without a Claude key, Claude with one, Google when chosen
+terjiman.DEMO, real_key = False, t.key
+t.key = ""
+t.settings.set("quality", "best")
+check("without a Claude key Terjiman uses free Google and says so", t.quality() == "google" and t.free_by_default())
+t.settings.set("quality", "google")
+check("choosing Google in Settings hides the free-mode banner", t.quality() == "google" and not t.free_by_default())
+t.key = "test-key"
+t.settings.set("quality", "best")
+check("with a Claude key Terjiman uses Claude", t.quality() == "best" and not t.free_by_default())
+t.settings.set("quality", "fast")
+check("Haiku when chosen", t.quality() == "fast")
+terjiman.DEMO, t.key = True, real_key
+t.settings.set("quality", "best")
 
 
 # ---- the settings window
@@ -84,7 +99,7 @@ def drive():
     check("a shortcut without Ctrl/Alt is refused", dialog.isVisible() and "Ctrl" in dialog.message.text(),
           dialog.message.text())
     dialog.shortcut.setKeySequence(QKeySequence.fromString("Ctrl+Shift+F10", QKeySequence.SequenceFormat.PortableText))
-    dialog.fast.setChecked(True)
+    dialog.google.setChecked(True)
     dialog.target.setCurrentIndex(dialog.target.findData("nl"))
     dialog.ui_language.setCurrentIndex(dialog.ui_language.findData("tr"))
     dialog.copy_twice.setChecked(False)
@@ -96,7 +111,7 @@ QTimer.singleShot(300, drive)
 t.open_settings()          # returns when the window closes
 s = t.settings
 check("settings are saved", (s.get("shortcut"), s.get("quality"), s.get("target"), s.get("copy_twice"), t.lang)
-      == ("Ctrl+Shift+F10", "fast", "nl", False, "tr"),
+      == ("Ctrl+Shift+F10", "google", "nl", False, "tr"),
       str((s.get("shortcut"), s.get("quality"), s.get("target"), s.get("copy_twice"), t.lang)))
 saved = json.loads((HOME / "settings.json").read_text(encoding="utf-8"))
 check("settings.json is written", saved.get("shortcut") == "Ctrl+Shift+F10" and saved.get("language") == "tr")
@@ -113,13 +128,56 @@ check("the old shortcut is released", bool(free))
 check("the placeholder follows the new languages", "Engels" not in t.box.input.placeholderText()
       and "Felemenkçe" in t.box.input.placeholderText(), t.box.input.placeholderText())
 
-# ---- the update check answers (whether or not this folder is a git copy yet)
+# ---- the update button in the box (the app language is Turkish at this point)
+t._set_update_state("available")
+check("the update button turns blue and says so when an update is ready",
+      t.box.update_button.property("ready") is True and "Güncelle" in t.box.update_button.text(),
+      t.box.update_button.text())
+t._set_update_state("restart")
+check("it offers a restart when a newer version is already on disk", "Yeniden" in t.box.update_button.text())
+t._set_update_state(None)
+check("otherwise it is a quiet ⟳ that checks GitHub", t.box.update_button.text() == "⟳"
+      and not t.box.update_button.property("ready"))
+
+# ---- the update check answers; a newer version on disk asks for a restart
 messages = []
 t._message = lambda text, warning=False: messages.append(text)
+t._ask_restart = lambda: messages.append("asked to restart")
+t._remember_version()
 t._check_updates(quiet=False)
 for _ in range(20):
     app.processEvents()
 check("the update check gives an answer", bool(messages), messages[0][:80] if messages else "")
+messages.clear()
+t._started_head = "0" * 40          # as if this copy had started before the last git pull
+t._check_updates(quiet=False)
+for _ in range(20):
+    app.processEvents()
+check("a newer version on disk offers a restart", messages == ["asked to restart"] and t._update_state == "restart",
+      str(messages))
+
+# ---- reading a copied message goes through the chosen translator (demo, then the real free Google)
+def wait_read(test, seconds: float) -> str:
+    end = time.time() + seconds
+    while time.time() < end:
+        app.processEvents()
+        if test(t.box.read_body.text()):
+            break
+        time.sleep(0.02)
+    return t.box.read_body.text()
+
+
+t.apply_language("en")
+text = wait_read(lambda s: s == engine.DEMO_READ, 5) if t.read_copied("Hello! Thank you.", None) is None else ""
+check("reading a copied message shows its translation (demo)", text == engine.DEMO_READ, text)
+terjiman.DEMO, real_key = False, t.key
+t.key = ""
+t.read_copied("Thank you so much! Could you send us the photos?", None)
+text = wait_read(lambda s: bool(engine.ARABIC_SCRIPT.search(s)), 15)
+check("without a key, a copied message is read into Uyghur by free Google", bool(engine.ARABIC_SCRIPT.search(text)),
+      text)
+terjiman.DEMO, t.key = True, real_key
+t.box.hide()
 
 t.quit()
 print()
