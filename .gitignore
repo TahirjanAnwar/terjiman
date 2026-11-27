@@ -1,0 +1,13 @@
+# Made on this PC by setup.cmd or while using Terjiman
+.venv/
+Terjiman.exe
+*.old-*
+build-new/
+settings.json
+settings.tmp
+terjiman.log
+__pycache__/
+*.pyc
+
+# Test pictures and scratch settings (tools/check_app.py)
+test-output/
