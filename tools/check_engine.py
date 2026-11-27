@@ -83,7 +83,7 @@ check("demo cancel stops", demo.write(engine.DEMO_SENTENCE, mine="ug", target="e
 
 # ---- the SDK accepts our requests (needs the internet; a fake key is refused for free)
 if "--offline" not in sys.argv:
-    fake = "sk-ant-api03-terjiman-test-not-a-real-key"
+    fake = "terjiman-test-not-a-real-key"     # doesn't look like a real key, so secret scanners stay quiet
     real = engine.Engine(fake)
     for quality in ("best", "fast"):
         try:

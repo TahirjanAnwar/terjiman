@@ -4,9 +4,10 @@ One Uyghur message is translated with Claude Opus 5.5 (Best) and with Claude Hai
 English message is read into Uyghur with Haiku. It prints the versions with their meanings, how long Claude took
 (until the first words showed and in total), and what each request cost. The key itself is never printed.
 
-    .venv\\Scripts\\python.exe tools\\check_live.py [--wait MINUTES]
+    .venv\\Scripts\\python.exe tools\\check_live.py [--wait MINUTES] [--cache]
 
 --wait: first wait (up to that many minutes) until a key is saved in Terjiman's settings.
+--cache: instead, check that Claude caches Terjiman's instructions (two short messages per model, about 2 cents).
 """
 import re
 import sys
@@ -48,6 +49,31 @@ def mixed_letters(text: str) -> str:
     return "  <- Cyrillic letters in Uyghur!" if CYRILLIC.search(text) else ""
 
 
+def check_cache(worker) -> int:
+    """Two short messages per model, one after the other: the first request writes Terjiman's instructions to the
+    cache, the second must read them from it. About 2 US cents in all."""
+    messages = ["ئەتە كۆرۈشەيلى.", "رەھمەت، ناھايىتى چىرايلىق!"]
+    failed, total = False, 0.0
+    for quality in ("best", "fast"):
+        for number, message in enumerate(messages, 1):
+            try:
+                result = worker.write(message, mine="ug", target="en", quality=quality)
+            except engine.EngineError as error:
+                print(f"{engine.MODELS[quality]} #{number}: FAILED - {error.kind} {error.detail}")
+                failed = True
+                continue
+            usage = worker.last_usage
+            price = cost(quality, usage)
+            total += price
+            print(f"{engine.MODELS[quality]} #{number}: {tokens(usage)}, ${price:.4f}  ->  {result['versions'][0]['text']}")
+            if number == 2 and not (getattr(usage, "cache_read_input_tokens", 0) or 0):
+                print("  FAIL: the second request didn't read the instructions from the cache")
+                failed = True
+    print(f"\nTotal cost of this test: ${total:.4f}")
+    print("CACHE WORKS" if not failed else "CACHE CHECK FAILED")
+    return 1 if failed else 0
+
+
 def main() -> int:
     if "--wait" in sys.argv:
         minutes = float(sys.argv[sys.argv.index("--wait") + 1])
@@ -70,6 +96,8 @@ def main() -> int:
         return 1
 
     worker = engine.Engine(key)
+    if "--cache" in sys.argv:
+        return check_cache(worker)
     total_cost = 0.0
     failed = False
     for quality in ("best", "fast"):

@@ -49,18 +49,19 @@ To have it ready after every restart, tick **Start Terjiman when Windows starts*
 
 ## Your Claude API key
 
-Terjiman uses Claude through the Anthropic API. The API is paid per use, separately from a Claude.ai subscription.
+Terjiman uses Claude through the Anthropic API. It doesn't come with a key: everyone uses their own. The API is
+paid per use, separately from a Claude.ai subscription.
 
 1. Sign in at [platform.claude.com](https://platform.claude.com) and add some credit (Settings → Billing).
    $5 is plenty to start.
 2. Create a key at [platform.claude.com/settings/keys](https://platform.claude.com/settings/keys).
 3. In Terjiman, click **⚙** (Settings), paste the key, click **Check key**, then **Save**.
 
-The key is kept in Windows Credential Manager, not in a file, and is never uploaded to GitHub.
+The key is kept in Windows Credential Manager on your own PC, not in a file, and is only ever sent to Anthropic.
 
-**Cost.** *Best* (Claude Opus 5.5) costs about 1–2 US cents per message. *Fast and cheap* (Claude Haiku 5.5) costs
-less than 0.1 cent per message. Terjiman asks Claude when you stop typing for a moment, so a long message
-written with pauses can cost a little more.
+**Cost.** *Best* (Claude Opus 5.5) costs about 1–1.5 US cents per message. *Fast and cheap* (Claude Haiku 5.5)
+costs less than 0.1 cent per message, but its Uyghur is weaker. Terjiman asks Claude again each time you pause
+while typing. Claude keeps Terjiman's instructions cached for 5 minutes, so those repeats cost about 30% less.
 
 **Privacy.** What you write in the box, and the text you read with Ctrl+C twice, is sent to Anthropic's API to be
 translated. Nothing else leaves your PC.

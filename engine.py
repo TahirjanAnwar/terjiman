@@ -265,7 +265,10 @@ class Engine:
               cancelled: Callable[[], bool] = lambda: False) -> dict | None:
         request = {
             "max_tokens": 16000,
-            "system": write_system_prompt(mine, target),
+            # The instructions (about 1,000 tokens) are the same in every request, so Claude keeps them cached for
+            # 5 minutes after each use: asking again while the writer types pays a tenth of the price for them.
+            "system": [{"type": "text", "text": write_system_prompt(mine, target),
+                        "cache_control": {"type": "ephemeral"}}],
             "messages": [{"role": "user", "content": write_user_message(text, received)}],
             # Low effort: this is a quick, chat-like job and the user is waiting for it.
             "output_config": {"effort": "low", "format": {"type": "json_schema", "schema": WRITE_SCHEMA}},
