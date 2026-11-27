@@ -29,7 +29,7 @@ from pathlib import Path
 
 APP_NAME = "Terjiman"
 APP_ID = "TProduction.Terjiman"
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 APP_DIR = Path(__file__).resolve().parent
 HOME = Path(os.environ["TERJIMAN_HOME"]).resolve() if os.environ.get("TERJIMAN_HOME") else APP_DIR
 SETTINGS_PATH = HOME / "settings.json"
@@ -382,6 +382,61 @@ def apply_palette(app: QApplication) -> None:
     for r in (role.WindowText, role.Text, role.ButtonText):
         palette.setColor(group.Disabled, r, QColor("#6d707b"))
     app.setPalette(palette)
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort), ("Data3", ctypes.c_ushort),
+                ("Data4", ctypes.c_ubyte * 8)]
+
+    def __init__(self, text: str):
+        super().__init__()
+        ctypes.oledll.ole32.CLSIDFromString(ctypes.c_wchar_p("{" + text + "}"), ctypes.byref(self))
+
+
+class _PROPERTYKEY(ctypes.Structure):
+    _fields_ = [("fmtid", _GUID), ("pid", ctypes.c_ulong)]
+
+
+class _PROPVARIANT(ctypes.Structure):
+    _fields_ = [("vt", ctypes.c_ushort), ("r1", ctypes.c_ushort), ("r2", ctypes.c_ushort), ("r3", ctypes.c_ushort),
+                ("value", ctypes.c_wchar_p), ("pad", ctypes.c_void_p)]
+
+
+def set_taskbar_identity(widget: QWidget) -> None:
+    """Shows a window on the taskbar as Terjiman, with Terjiman's icon (not as Python with Python's icon), and makes
+    pinning it pin Terjiman.exe. The same as T-Player does."""
+    values = ((5, APP_ID), (2, subprocess.list2cmdline(launch_command())), (4, APP_NAME), (3, f"{ICON_PATH},0"))
+    shell32 = ctypes.windll.shell32         # 5 ID, 2 RelaunchCommand, 4 RelaunchDisplayName, 3 RelaunchIcon
+    shell32.SHGetPropertyStoreForWindow.argtypes = [ctypes.c_void_p, ctypes.POINTER(_GUID),
+                                                    ctypes.POINTER(ctypes.c_void_p)]
+    store = ctypes.c_void_p()
+    if shell32.SHGetPropertyStoreForWindow(int(widget.winId()), _GUID("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"),
+                                           ctypes.byref(store)) != 0 or not store:
+        return
+    vtable = ctypes.cast(store, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+    set_value = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(_PROPERTYKEY),
+                                   ctypes.POINTER(_PROPVARIANT))(vtable[6])
+    commit = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(vtable[7])
+    release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtable[2])
+    fmtid = _GUID("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3")   # System.AppUserModel.*
+    try:
+        for pid, text in values:
+            variant = _PROPVARIANT()
+            variant.vt = 31  # VT_LPWSTR
+            variant.value = text
+            set_value(store, ctypes.byref(_PROPERTYKEY(fmtid, pid)), ctypes.byref(variant))
+        commit(store)
+    finally:
+        release(store)
+
+
+def windows_touches(widget: QWidget) -> None:
+    """Dark title bar and taskbar identity for a window that shows on the taskbar (cosmetic, never fatal)."""
+    for step in (set_dark_title_bar, set_taskbar_identity):
+        try:
+            step(widget)
+        except Exception as error:  # noqa: BLE001
+            log(f"{step.__name__} failed: {error}")
 
 
 def set_dark_title_bar(widget: QWidget) -> None:
@@ -876,7 +931,7 @@ class SettingsDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        set_dark_title_bar(self)
+        windows_touches(self)
 
     def say(self, text: str, error: bool = False) -> None:
         self.message.setStyleSheet("color: #ff8a80;" if error else "color: #8fd19e;")
@@ -1618,6 +1673,7 @@ class Terjiman(QObject):
         box = QMessageBox(QMessageBox.Icon.Warning if warning else QMessageBox.Icon.Information, APP_NAME, text)
         box.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         box.setWindowIcon(self.icon)
+        windows_touches(box)
         return box
 
     def _message(self, text: str, warning: bool = False) -> None:

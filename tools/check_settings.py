@@ -90,10 +90,37 @@ t.settings.set("quality", "best")
 
 
 # ---- the settings window
+def window_property(widget, pid: int):
+    """Reads one System.AppUserModel property of a window back from Windows (what the taskbar uses)."""
+    import ctypes
+    store = ctypes.c_void_p()
+    ctypes.windll.shell32.SHGetPropertyStoreForWindow(ctypes.c_void_p(int(widget.winId())),
+                                                      ctypes.byref(terjiman._GUID("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")),
+                                                      ctypes.byref(store))
+    if not store:
+        return None
+    vtable = ctypes.cast(store, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+    get_value = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(terjiman._PROPERTYKEY),
+                                   ctypes.POINTER(terjiman._PROPVARIANT))(vtable[5])
+    release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtable[2])
+    variant = terjiman._PROPVARIANT()
+    key = terjiman._PROPERTYKEY(terjiman._GUID("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), pid)
+    try:
+        get_value(store, ctypes.byref(key), ctypes.byref(variant))
+        return variant.value if variant.vt == 31 else None
+    finally:
+        ctypes.oledll.ole32.PropVariantClear(ctypes.byref(variant))
+        release(store)
+
+
 def drive():
     dialog = t._settings_dialog
     if dialog is None:
         return QTimer.singleShot(100, drive)
+    check("on the taskbar, Settings shows as Terjiman (not Python)", window_property(dialog, 5) == terjiman.APP_ID,
+          str(window_property(dialog, 5)))
+    icon = window_property(dialog, 3) or ""
+    check("with Terjiman's icon", icon.endswith("terjiman.ico,0") and Path(icon[:-2]).exists(), icon)
     dialog.shortcut.setKeySequence(QKeySequence.fromString("A", QKeySequence.SequenceFormat.PortableText))
     dialog._save()
     check("a shortcut without Ctrl/Alt is refused", dialog.isVisible() and "Ctrl" in dialog.message.text(),
